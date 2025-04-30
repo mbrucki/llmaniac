@@ -17,7 +17,5 @@ COPY . .
 # Nie używamy EXPOSE, ponieważ Uvicorn będzie uruchamiany na porcie $PORT
 # EXPOSE 8001 # Już niepotrzebne, użyjemy $PORT
 
-# Uruchom aplikację używając Uvicorn.
-# Nasłuchuj na 0.0.0.0, aby akceptować połączenia zewnętrzne.
-# Użyj zmiennej środowiskowej $PORT dostarczonej przez Cloud Run.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "$PORT"] 
+# Uruchom aplikację używając Uvicorn (forma shell dla interpretacji $PORT).
+CMD uvicorn main:app --host 0.0.0.0 --port $PORT 
