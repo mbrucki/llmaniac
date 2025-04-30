@@ -1,0 +1,43 @@
+steps:
+# Krok 1: Zbuduj obraz kontenera i wypchnij do Google Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+            'build', 
+            '-t', 'gcr.io/$PROJECT_ID/llmaniac:$SHORT_SHA', 
+            '-t', 'gcr.io/$PROJECT_ID/llmaniac:latest', 
+            '.'
+          ]
+  id: Build
+
+# Krok 2: Wdróż obraz kontenera na Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args: [
+            'run', 'deploy', 'llmaniac',
+            '--image', 'gcr.io/$PROJECT_ID/llmaniac:$SHORT_SHA', # Użyj obrazu z tagiem commita
+            '--region', 'europe-central2',
+            '--platform', 'managed',
+            '--allow-unauthenticated', # Utrzymaj publiczny dostęp
+            # Podłącz sekrety
+            '--set-secrets=OPENAI_API_KEY=openai-api-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest',
+            # Ustaw zmienne środowiskowe LangSmith
+            '--set-env-vars=LANGSMITH_TRACING=true,LANGSMITH_PROJECT=llmaniac',
+            # Ustaw zoptymalizowane zasoby
+            '--memory=256Mi',
+            '--cpu=1',
+            '--cpu-throttling',
+            '--min-instances=0',
+            '--max-instances=5',
+            '--concurrency=80'
+          ]
+  id: Deploy
+
+# Wypchnij zbudowane obrazy do GCR po zakończeniu builda
+images:
+- 'gcr.io/$PROJECT_ID/llmaniac:$SHORT_SHA'
+- 'gcr.io/$PROJECT_ID/llmaniac:latest'
+
+options:
+  # Zwiększa timeout, jeśli budowanie/wdrażanie trwa dłużej
+  machineType: 'E2_HIGHCPU_8' # Można dostosować w razie potrzeby
+  logging: CLOUD_LOGGING_ONLY 

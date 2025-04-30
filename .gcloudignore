@@ -1,0 +1,31 @@
+# Plik .gcloudignore do kontroli przesyłania źródeł do GCP
+
+# Wyklucz pliki Git
+.git/
+
+# Wyklucz środowisko wirtualne Python
+/venv
+
+# Wyklucz pliki Python cache
+__pycache__/
+*.pyc
+
+# Wyklucz pliki środowiskowe (sekrety nie powinny być przesyłane)
+.env
+*.env
+
+# Wyklucz pliki IDE
+.vscode/
+.idea/
+*.swp
+
+# Wyklucz pliki specyficzne dla macOS
+.DS_Store
+
+# Można wykluczyć inne pliki tymczasowe lub logi, jeśli istnieją
+# *.log
+
+# Wyklucz pliki ignore
+.dockerignore
+.gitignore
+.gcloudignore 
