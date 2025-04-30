@@ -39,5 +39,5 @@ images:
 
 options:
   # Zwiększa timeout, jeśli budowanie/wdrażanie trwa dłużej
-  machineType: 'E2_HIGHCPU_8' # Można dostosować w razie potrzeby
+  # machineType: 'E2_HIGHCPU_8' # Można dostosować w razie potrzeby
   logging: CLOUD_LOGGING_ONLY 
