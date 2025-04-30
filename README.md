@@ -151,6 +151,79 @@ In your frontend HTML (e.g., `index.html`), configure the loader snippet:
 *   Set `js.src` to point to the `/snippets/llmaniac-client.js` path on your **deployed Cloud Run service URL**.
 *   If using `chatPlatform: 'standard'`, ensure your application dispatches the `llmChatLogEvent` (see client library code for details).
 
+## Client-Side Integration
+
+Integrating `llmaniac` into your frontend application uses a simple loader snippet, similar to Google Tag Manager. This snippet loads the main `llmaniac-client.js` library, which handles message capturing and classification based on your configuration.
+
+**Two Main Integration Methods:**
+
+1.  **Standard Event (`llmChatLogEvent`)**: You configure the loader snippet with `chatPlatform: 'standard'` (or leave it as default). Your application **must** dispatch the `llmChatLogEvent` (or the event name specified in `customEventName` config) for each message.
+2.  **Platform-Specific API**: You configure the loader snippet with `chatPlatform` set to `'intercom'`, `'drift'`, or `'zendesk'`. The `llmaniac-client.js` library will automatically use the respective platform's client-side API to listen for messages. Your application **does not** need to dispatch `llmChatLogEvent` in this case.
+
+### 1. (If using Standard Event) Implement the Standard Event Dispatch
+
+If you set `chatPlatform: 'standard'`, your application needs to trigger a `CustomEvent` named `llmChatLogEvent` (or the name specified in `customEventName` config) on the `document` object for each message.
+
+**`llmChatLogEvent` Standard Specification (MVP):**
+
+*   **Event Name:** `llmChatLogEvent` (configurable via `customEventName` in `window.llmaniacConfig`)
+*   **Target:** `document`
+*   **`event.detail` Object Structure:**
+    *   `sender`: (String, **Required**) "human" or "ai".
+    *   `text`: (String, **Required**) Full message content.
+
+**Example Dispatch Code:**
+```javascript
+const messageDetails = {
+  sender: "human",
+  text: "The message text."
+};
+// Use the configured event name, default is 'llmChatLogEvent'
+const eventName = window.llmaniacConfig?.customEventName || 'llmChatLogEvent'; 
+const chatEvent = new CustomEvent(eventName, { detail: messageDetails });
+document.dispatchEvent(chatEvent);
+```
+
+### 2. Add the llmaniac Loader Snippet
+
+Place the following snippet just before the closing `</body>` tag in your HTML. **Crucially, set the `containerId` in `window.llmaniacConfig`.**
+
+```html
+<!-- llmaniac Loader Snippet -->
+<script>
+  // --- llmaniac Configuration (Set BEFORE the snippet) ---
+  window.llmaniacConfig = {
+    // apiUrl: 'https://YOUR_CUSTOM_DOMAIN/classify', // Default: https://llmaniac-249969218520.europe-central2.run.app/classify
+    chatPlatform: 'standard', // Options: 'standard', 'intercom', 'drift', 'zendesk'
+    containerId: 'llm-000',   // *** REQUIRED: Set your specific Container ID here ***
+    // customEventName: 'myCustomChatEvent', // Optional: Name for the standard event
+    // logLevel: 'info',     // Optional: 'debug', 'info', 'warn', 'error', 'none'
+    // enableDataLayerPush: true // Optional: Set to false to disable dataLayer pushes
+  };
+  // --------------------------------------------------------
+
+  (function(w, d, s, o, f, js, fjs) {
+      // Config object (o) is already initialized above as window.llmaniacConfig
+      f = 'llmaniac-client.js';
+      js = d.createElement(s);
+      fjs = d.getElementsByTagName(s)[0];
+      js.id = 'llmaniac-client-script';
+      js.async = 1;
+      // --- Point to your deployed Cloud Run service URL --- 
+      js.src = 'https://llmaniac-249969218520.europe-central2.run.app/snippets/' + f; 
+      // ---------------------------------------------------
+      fjs.parentNode.insertBefore(js, fjs);
+  }(window, document, 'script', 'llmaniacConfig'));
+</script>
+<!-- End llmaniac Loader Snippet -->
+```
+
+**Explanation:**
+
+*   **Configuration (`window.llmaniacConfig`):** The `containerId` **must** be set correctly. The `chatPlatform` selects the integration method. `apiUrl` can be set if the backend is hosted elsewhere (defaults to the Cloud Run service URL). `logLevel`, `enableDataLayerPush` and `customEventName` are optional.
+*   **Loading `llmaniac-client.js`:** Loads the main library from the deployed Cloud Run service URL.
+*   **Functionality:** The library sends the configured `containerId` to `/classify`. The backend validates the origin based on settings for that `containerId`.
+
 ## Local Development
 
 1.  Create and activate a Python virtual environment: `python3 -m venv venv && source venv/bin/activate`.
