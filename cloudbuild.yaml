@@ -1,5 +1,5 @@
 steps:
-# Krok 1: Zbuduj obraz kontenera i wypchnij do Google Container Registry
+# Krok 1: Zbuduj obraz kontenera
 - name: 'gcr.io/cloud-builders/docker'
   args: [
             'build', 
@@ -9,7 +9,15 @@ steps:
           ]
   id: Build
 
-# Krok 2: Wdróż obraz kontenera na Cloud Run
+# Krok 2: Wypchnij obraz kontenera do Google Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/llmaniac:$SHORT_SHA']
+  id: PushSha
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/llmaniac:latest']
+  id: PushLatest
+
+# Krok 3: Wdróż obraz kontenera na Cloud Run
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
   args: [
@@ -31,8 +39,9 @@ steps:
             '--concurrency=80'
           ]
   id: Deploy
+  waitFor: ['PushSha'] # Poczekaj na zakończenie pushowania obrazu z SHA
 
-# Wypchnij zbudowane obrazy do GCR po zakończeniu builda
+# Sekcja images jest teraz mniej krytyczna, bo push jest jawny, ale zostawiamy ją
 images:
 - 'gcr.io/$PROJECT_ID/llmaniac:$SHORT_SHA'
 - 'gcr.io/$PROJECT_ID/llmaniac:latest'
