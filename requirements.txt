@@ -9,4 +9,5 @@ loguru
 sentence-transformers # Dodane dla osadzeń semantycznych
 openai # Dla klasyfikacji za pomocą LLM
 python-dotenv # Do wczytywania zmiennych z pliku .env
-langsmith # Do observability via LangSmith 
+langsmith # Do observability via LangSmith
+google-cloud-secret-manager # Do odczytu sekretów z GCP 

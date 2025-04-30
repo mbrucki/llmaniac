@@ -12,45 +12,94 @@ from pydantic import BaseModel, Field
 from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 from langsmith.wrappers import wrap_openai
+from google.cloud import secretmanager
+from google.api_core.exceptions import NotFound
 
-# --- Wczytaj zmienne środowiskowe z pliku .env ---
+# --- Wczytaj zmienne środowiskowe z pliku .env (dla lokalnego dev) ---
 load_dotenv()
-# -------------------------------------------------
+# ---------------------------------------------------------------------
 
 # --- Configuration & Setup ---
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Klucze API i Konfiguracja LangSmith ---
-openai_api_key = os.getenv("OPENAI_API_KEY")
-langsmith_api_key = os.getenv("LANGSMITH_API_KEY")
+# --- Funkcja pomocnicza do pobierania sekretów z GCP Secret Manager ---
+def get_secret(project_id: str, secret_id: str, version_id: str = "latest") -> str | None:
+    """Pobiera wartość sekretu z Google Secret Manager."""
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{project_id}/secrets/{secret_id}/versions/{version_id}"
+        response = client.access_secret_version(request={"name": name})
+        payload = response.payload.data.decode("UTF-8")
+        logger.info(f"Successfully retrieved secret: {secret_id}")
+        return payload
+    except NotFound:
+        logger.error(f"Secret not found: {secret_id} in project {project_id}")
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving secret {secret_id}: {e}", exc_info=True)
+        return None
+# ----------------------------------------------------------------------
+
+# --- Klucze API i Konfiguracja LangSmith (z obsługą GCP Secret Manager) ---
+# Sprawdź, czy działamy w środowisku GCP (np. Cloud Run)
+IS_GCP_ENVIRONMENT = os.getenv("K_SERVICE") is not None
+GCP_PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+
+openai_api_key = None
+langsmith_api_key = None
+
+if IS_GCP_ENVIRONMENT:
+    logger.info("Detected GCP environment. Attempting to load secrets from Secret Manager.")
+    if GCP_PROJECT_ID:
+        openai_api_key = get_secret(GCP_PROJECT_ID, "openai-api-key")
+        langsmith_api_key = get_secret(GCP_PROJECT_ID, "langsmith-api-key")
+    else:
+        logger.error("Running in GCP, but GOOGLE_CLOUD_PROJECT env var not set. Cannot fetch secrets.")
+else:
+    logger.info("Not running in GCP environment. Loading secrets from environment variables / .env file.")
+
+# Fallback do zmiennych środowiskowych / .env, jeśli nie w GCP lub secret nie został znaleziony
+if not openai_api_key:
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if openai_api_key:
+        logger.info("Loaded OpenAI API key from environment variable / .env.")
+    else:
+         logger.error("CRITICAL: OpenAI API key not found in Secret Manager or environment variables.")
+
+if not langsmith_api_key:
+    langsmith_api_key = os.getenv("LANGSMITH_API_KEY")
+    if langsmith_api_key:
+         logger.info("Loaded Langsmith API key from environment variable / .env.")
+
+# Konfiguracja LangSmith pozostaje oparta o zmienne środowiskowe (mogą być ustawione w Cloud Run)
 langsmith_tracing_enabled = os.getenv("LANGSMITH_TRACING") == "true"
 langsmith_project = os.getenv("LANGSMITH_PROJECT") or "default"
 
-if not openai_api_key:
-    logger.warning("OPENAI_API_KEY environment variable not set. OpenAI classification will fail.")
 if langsmith_tracing_enabled and not langsmith_api_key:
-    logger.warning("LANGSMITH_TRACING is enabled, but LANGSMITH_API_KEY is not set. Tracing will likely fail.")
+     logger.error("CRITICAL: LangSmith tracing is enabled, but Langsmith API key was not loaded.")
+# --------------------------------------------------------------------------
 
-# --- Klient OpenAI (opcjonalnie owinięty przez LangSmith) ---
-# Najpierw stwórz surowego klienta
+# --- Klient OpenAI (opcjonalnie owinięty przez LangSmith) --- 
+# Używa kluczy wczytanych powyżej
 raw_aclient = AsyncOpenAI(api_key=openai_api_key)
 
-# Owiń klienta, jeśli tracing LangSmith jest włączony
-if langsmith_tracing_enabled:
+if langsmith_tracing_enabled and langsmith_api_key: # Sprawdź, czy klucz Langsmith faktycznie jest
     logger.info(f"LangSmith tracing enabled. Wrapping OpenAI client. Project: {langsmith_project}")
-    # Ustaw zmienne środowiskowe, których wrap_openai może oczekiwać
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
     os.environ["LANGCHAIN_API_KEY"] = langsmith_api_key
     os.environ["LANGCHAIN_PROJECT"] = langsmith_project
     aclient = wrap_openai(raw_aclient)
 else:
-    logger.info("LangSmith tracing is disabled. Using raw OpenAI client.")
-    aclient = raw_aclient
+    if langsmith_tracing_enabled and not langsmith_api_key:
+        logger.warning("LangSmith tracing was enabled but API key is missing. Using raw OpenAI client.")
+    else:
+        logger.info("LangSmith tracing is disabled. Using raw OpenAI client.")
+    aclient = raw_aclient 
 
 OPENAI_MODEL = "gpt-3.5-turbo"
-# --------------------------------------------------------
+# ---------------------------------------------------------
 
 app = FastAPI(
     title="llmaniac MVP",
