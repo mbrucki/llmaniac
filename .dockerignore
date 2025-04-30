@@ -1,0 +1,27 @@
+# Środowisko wirtualne
+venv/
+
+# Pliki Python bytecode i cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pliki IDE
+.vscode/
+.idea/
+*.swp
+
+# Pliki środowiskowe (sekrety nie powinny być w obrazie)
+.env
+*.env
+
+# Pliki Git
+.git/
+.gitignore
+
+# Inne
+.DS_Store
+Dockerfile
+.dockerignore
+README.md 

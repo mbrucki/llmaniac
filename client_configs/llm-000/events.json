@@ -1,0 +1,147 @@
+[
+  {
+    "name": "lead_flow_started",
+    "description": "AI asking for email address. This is the only case to trigger this event.",
+    "sender": "ai",
+    "examples": [
+      "Jaki jest Twój adres email?"
+    ]
+  },
+  {
+    "name": "ai_gave_estimation",
+    "description": "(AI) Provided a cost estimation to the user",
+    "sender": "ai",
+    "examples": [
+      "Szacowany koszt kolportażu to 449 zł.",
+      "Wycena dla 1000 ulotek wynosi około 250 zł netto.",
+      "Koszt takiej usługi to w przybliżeniu 1200 zł.",
+      "Przygotowałem wycenę: 500 zł."
+    ]
+  },
+  {
+    "name": "lead_flow_completed",
+    "description": "(AI) Confirmed that the lead summary has been sent",
+    "sender": "ai",
+    "examples": [
+      "Email z podsumowaniem zapytania został wysłany.",
+      "Przekazałem szczegóły do naszego doradcy. Spodziewaj się kontaktu.",
+      "Gotowe, podsumowanie trafiło na maila.",
+      "Wysłano podsumowanie do zespołu sprzedaży."
+    ]
+  },
+  {
+    "name": "provided_email",
+    "description": "(Human) User provided an email address",
+    "sender": "human",
+    "examples": [
+      "Mój email to test@example.com",
+      "kontakt@firma.pl",
+      "jan.kowalski@domena.eu",
+      "anna.nowak@mail.com",
+      "user@test.co"
+    ]
+  },
+  {
+    "name": "provided_phone",
+    "description": "(Human) User provided a phone number",
+    "sender": "human",
+    "examples": [
+      "Zadzwoń na 500 123 456",
+      "Mój numer to 12 345 67 89",
+      "+48 666-777-888",
+      "777 888 999",
+      "601-602-603"
+    ]
+  },
+  {
+    "name": "provided_company_name",
+    "description": "(Human) User provided a company name",
+    "sender": "human",
+    "examples": [
+      "Firma XYZ Sp. z o.o.",
+      "FajnaFirma",
+      "TechCorp",
+      "ABC",
+      "ACME Corporation"
+    ]
+  },
+  {
+    "name": "provided_quantity_location",
+    "description": "(Human) User provided quantity and/or location information",
+    "sender": "human",
+    "examples": [
+      "2000 ulotek w Sopocie",
+      "500 plakatów w Warszawie",
+      "1000 sztuk, Gdańsk",
+      "3000, Trójmiasto",
+      "5000 ulotek Kraków"
+    ]
+  },
+  {
+    "name": "agreed_to_proceed",
+    "description": "(Human) User agreed to proceed with the offer/contact",
+    "sender": "human",
+    "examples": [
+      "Tak, proszę przekazać",
+      "Zgadzam się",
+      "Ok, czekam na kontakt",
+      "Jasne",
+      "Tak"
+    ]
+  },
+  {
+    "name": "analyse_data",
+    "description": "(Human) Asks AI to analyse data",
+    "sender": "human",
+    "examples": [
+      "Przeanalizuj moje dane sprzedażowe",
+      "Podsumuj KPI za ostatni miesiąc",
+      "Jaka jest moja średnia wartość zamówienia?",
+      "Pokaż trendy w konwersji"
+    ]
+  },
+  {
+    "name": "schedule_meeting",
+    "description": "(Human) Wants to book a meeting",
+    "sender": "human",
+    "examples": [
+      "Umów mnie na spotkanie",
+      "Zarezerwuj demo na jutro",
+      "Czy mogę porozmawiać z konsultantem?",
+      "Potrzebuję umówić rozmowę"
+    ]
+  },
+  {
+    "name": "request_support",
+    "description": "(Human) Asks for help or support",
+    "sender": "human",
+    "examples": [
+      "Pomocy!",
+      "Nie działa mi logowanie",
+      "Jak mogę zresetować hasło?",
+      "Mam problem z aplikacją"
+    ]
+  },
+  {
+    "name": "ai_confirm_action",
+    "description": "(AI) Confirms it will perform the requested action",
+    "sender": "ai",
+    "examples": [
+      "Jasne, już analizuję dane.",
+      "Dobrze, rezerwuję spotkanie na jutro.",
+      "Rozumiem, sprawdzam szczegóły.",
+      "Oczywiście, przygotowuję podsumowanie."
+    ]
+  },
+  {
+    "name": "ai_ask_clarification",
+    "description": "(AI) Asks for more information to proceed",
+    "sender": "ai",
+    "examples": [
+      "Aby zarezerwować spotkanie, potrzebuję znać preferowaną godzinę.",
+      "Czy możesz podać zakres dat dla analizy?",
+      "Nie jestem pewien, co masz na myśli. Możesz sprecyzować?",
+      "Potrzebuję więcej szczegółów, aby Ci pomóc."
+    ]
+  }
+]
