@@ -1,230 +1,224 @@
 # llmaniac MVP
 
-**llmaniac** is a lightweight, no-code backend service that captures messages in LLM-powered chats, uses a zero-shot model to classify them into predefined events based on the **container-specific configuration** (events, thresholds, allowed domains), and exposes a simple API for triggering analytics calls.
+**llmaniac** is a lightweight backend service designed to capture messages from chat applications, classify them into predefined events using the OpenAI API based on container-specific configuration, and facilitate analytics integration via Google Tag Manager (GTM) dataLayer pushes.
 
-This MVP provides a local FastAPI-based implementation.
+This version is deployed on Google Cloud Run and integrates with LangSmith for observability.
 
 ## Features
 
 *   **Container-Specific Configuration:** Loads event definitions (`events.json`) and settings (`settings.json`, including `allowed_domains`) from a directory specific to the `containerId` (e.g., `client_configs/llm-000/`).
-*   **Caching:** Container configurations are cached in memory after first load for performance.
-*   **Exposes `/classify` endpoint:**
-    *   Accepts `text`, `sender`, and `containerId`.
-    *   **Domain Validation:** Verifies the request's `Origin` header against the `allowed_domains` specified in the container's `settings.json`. Returns 403 Forbidden if the origin is not allowed.
-    *   Classifies the message **only against events matching the specified `sender`** from the container's `events.json`.
-    *   Returns the classification result (`event` name, `confidence`, `shouldPush`, `sender`).
-*   Exposes `/push` endpoint (unchanged behavior, logs request).
-*   Provides a universal client-side JavaScript library (`snippets/llmaniac-client.js`) loadable via a small snippet, configurable via `window.llmaniacConfig` (including `containerId` and `chatPlatform`).
-*   Uses local dependencies only.
+*   **OpenAI Classification:** Uses the OpenAI API (specifically `gpt-3.5-turbo` by default) to classify messages based on event descriptions and examples provided in `events.json`. Includes the previous message for context.
+*   **Domain Validation:** Verifies the request's `Origin` header against the `allowed_domains` specified in the container's `settings.json`. Returns 403 Forbidden if the origin is not allowed.
+*   **LangSmith Observability:** Automatically traces OpenAI API calls to LangSmith when configured.
+*   **Google Secret Manager Integration:** Securely loads API keys (OpenAI, LangSmith) from GCP Secret Manager when running on Cloud Run.
+*   **Environment Variable Fallback:** Reads configuration (API keys, LangSmith settings) from environment variables or a `.env` file for local development.
+*   **Standardized DataLayer Events:** Pushes a consistent `llmaniac_event` to `dataLayer`, with the specific classified event name included in the `action` property.
+*   **Cloud Run Deployment:** Includes `Dockerfile`, `.dockerignore`, `.gcloudignore`, and `cloudbuild.yaml` for easy deployment and CI/CD on Google Cloud Run.
+*   **CI/CD:** Configured via Cloud Build trigger to automatically build and deploy on pushes to the `main` branch.
+*   **Client-Side Snippet:** Provides a universal JavaScript client (`snippets/llmaniac-client.js`) served by the backend, loadable via a small loader snippet.
+
+## Architecture (Cloud Run)
+
+1.  **Frontend Application:** Hosts the `index.html` (or similar) with the chat interface.
+2.  **Loader Snippet (in Frontend):** Loads `llmaniac-client.js` from the Cloud Run service URL.
+3.  **`llmaniac-client.js`:**
+    *   Listens for chat messages (via standard `llmChatLogEvent` or platform APIs).
+    *   Sends classification requests (`text`, `sender`, `containerId`) to the `/classify` endpoint on Cloud Run.
+    *   Receives classification results.
+    *   Pushes standardized `llmaniac_event` to the `dataLayer`.
+4.  **Cloud Run Service (`llmaniac`):
+    *   Runs the FastAPI application (`main.py`).
+    *   Loads API keys from GCP Secret Manager.
+    *   Loads LangSmith config from environment variables.
+    *   Serves the `/classify` endpoint.
+    *   Serves the `/snippets/llmaniac-client.js` static file.
+    *   Handles classification logic by calling the OpenAI API (potentially traced by LangSmith).
+    *   Maintains a simple in-memory history of the last message per container for context.
+5.  **GCP Secret Manager:** Stores `OPENAI_API_KEY` and `LANGSMITH_API_KEY` securely.
+6.  **Cloud Build:** Builds the Docker image and deploys new revisions to Cloud Run automatically on `git push` to `main`.
+7.  **Google Container Registry (GCR):** Stores the Docker images.
+8.  **LangSmith:** Receives traces of OpenAI calls for monitoring and debugging.
 
 ## Project Structure
 
 ```
-/llmaniac_project
+/llmaniac
 ├── client_configs/         <-- Root directory for container configurations
 │   └── llm-000/            <-- Example: Directory for container 'llm-000'
 │       ├── events.json     <-- Event definitions for this container
-│       └── settings.json   <-- Settings (e.g., allowed domains) for this container
+│       └── settings.json   <-- Settings (e.g., allowed domains)
 ├── snippets/
-│   └── llmaniac-client.js  <-- Universal client library
+│   └── llmaniac-client.js  <-- Universal client library (served by backend)
+├── .env.example            <-- Example environment file for local dev
+├── .dockerignore           <-- Files to ignore for Docker build context
+├── .gcloudignore           <-- Files to ignore for gcloud source upload
+├── .gitignore
+├── cloudbuild.yaml         <-- Cloud Build CI/CD configuration
+├── Dockerfile              <-- Docker image definition
 ├── main.py                 <-- FastAPI application
 ├── requirements.txt
 └── README.md
 ```
 
-### Container Configuration Files
+## Configuration
 
-*   **`client_configs/<containerId>/events.json`**: List of event objects specific to this container.
-*   **`client_configs/<containerId>/settings.json`**: Container-specific settings.
-    *   **`allowed_domains`**: (List[str], Required) List of allowed origin hostnames for this `containerId`.
+Configuration relies on environment variables, secrets, and container-specific JSON files.
 
-    Example `settings.json`:
-    ```json
-    {
-      "allowed_domains": [ "localhost", "127.0.0.1", "app.example.com" ]
-    }
-    ```
+### 1. Backend Configuration (Cloud Run / Local)
 
-## Setup
+The backend (`main.py`) requires the following configuration, loaded differently depending on the environment:
 
-1.  Create the directory structure.
-2.  Place `events.json` and `settings.json` for your default container (e.g., `llm-000`) in `client_configs/llm-000/`.
-3.  Create venv: `python3 -m venv venv` & `source venv/bin/activate`.
-4.  Install deps: `pip install -r requirements.txt`.
+*   **`OPENAI_API_KEY`** (Secret):
+    *   **Cloud Run:** Loaded from GCP Secret Manager (Secret ID: `openai-api-key`). Must be created beforehand.
+    *   **Local:** Loaded from `.env` file or system environment variable `OPENAI_API_KEY`.
+*   **`LANGSMITH_API_KEY`** (Secret, Optional):
+    *   **Cloud Run:** Loaded from GCP Secret Manager (Secret ID: `langsmith-api-key`). Must be created beforehand if tracing is enabled.
+    *   **Local:** Loaded from `.env` file or system environment variable `LANGSMITH_API_KEY`.
+*   **`LANGSMITH_TRACING`** (Environment Variable, Optional):
+    *   **Cloud Run:** Set via `--set-env-vars` in `cloudbuild.yaml` (e.g., `LANGSMITH_TRACING=true`).
+    *   **Local:** Set in `.env` file or system environment variable (e.g., `LANGSMITH_TRACING=true`). If set to `"true"`, tracing is enabled.
+*   **`LANGSMITH_PROJECT`** (Environment Variable, Optional):
+    *   **Cloud Run:** Set via `--set-env-vars` in `cloudbuild.yaml` (e.g., `LANGSMITH_PROJECT=llmaniac`).
+    *   **Local:** Set in `.env` file or system environment variable. Defaults to `"default"` if not set.
+*   **`GOOGLE_CLOUD_PROJECT`** (Environment Variable):
+    *   **Cloud Run:** Automatically set by the Cloud Run environment.
+    *   **Local:** Not typically needed unless directly interacting with GCP services that require it.
 
-## Running the Service
+**`.env` File (for Local Development):**
 
-Use Uvicorn to run the FastAPI application:
+Create a `.env` file in the project root (copy from `.env.example`):
 
-```bash
-uvicorn main:app --reload --port 8000
+```dotenv
+# .env file for local development
+
+# Required
+OPENAI_API_KEY=sk-...
+
+# Optional - LangSmith
+LANGSMITH_API_KEY=ls__...
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=llmaniac-local # Use a different project for local traces
+
+# GOOGLE_CLOUD_PROJECT=your-gcp-project-id # Only needed if testing secret manager locally
 ```
 
-*   `--reload`: Automatically restarts the server when code changes are detected.
-*   `--port 8000`: Runs the service on port 8000 (default).
+### 2. Container Configuration (`client_configs/`)
 
-The service will start, load the events, and initialize the transformer model. This might take a moment the first time as the model needs to be downloaded.
+*   Place configuration files for each client/container in `client_configs/<your-container-id>/`.
+*   **`events.json`**: A JSON list of event objects. Each object should have:
+    *   `name`: (String) Unique name for the event (e.g., `provided_email`).
+    *   `description`: (String) Description used in the OpenAI prompt.
+    *   `examples`: (List[String]) Examples used in the OpenAI prompt.
+    *   `sender`: (String) `"human"` or `"ai"`. The event will only be considered for messages from this sender.
+    *   `threshold`: (Float, Optional) Currently **not used** for decision making with OpenAI classification, but kept for potential future use or informational purposes.
+*   **`settings.json`**: Container-specific settings.
+    *   `allowed_domains`: (List[String], Required) List of allowed origin hostnames (e.g., `["localhost", "yourdomain.com"]`). Required for the `/classify` endpoint to accept requests.
 
-## Testing the Endpoints
+### 3. Frontend Snippet Configuration
 
-You can use tools like `curl` or HTTPie to test the API endpoints.
-
-### 1. Classify a Message
-
-Send a POST request to `/classify`, including the `containerId`. The request must originate from an allowed domain.
-
-**Using `curl` (Simulating allowed origin):**
-
-```bash
-curl -X POST http://localhost:8000/classify \
--H "Content-Type: application/json" \
--H "Origin: http://localhost" \
--d '{
-  "text": "Potrzebuję umówić rozmowę z kimś od sprzedaży",
-  "sender": "human",
-  "containerId": "llm-000"
-}'
-```
-
-**Expected Response (Example):**
-
-```json
-{
-  "event": "schedule_meeting",
-  "confidence": 0.951234,
-  "shouldPush": true,
-  "sender": "human"
-}
-```
-
-**Using `curl` (Simulating disallowed origin):**
-
-```bash
-curl -X POST http://localhost:8000/classify \
--H "Content-Type: application/json" \
--H "Origin: http://evil-domain.com" \
--d '{
-  "text": "Test message",
-  "sender": "human",
-  "containerId": "llm-000"
-}'
-```
-
-**Expected Response:** `403 Forbidden`
-
-### 2. Simulate an Analytics Push
-
-Send a POST request to `/push`. Include the `sender` and `event`.
-
-**Using `curl`:**
-
-```bash
-curl -X POST http://localhost:8000/push \
--H "Content-Type: application/json" \
--d '{
-  "event": "schedule_meeting",
-  "sender": "human",
-  "properties": {
-    "container_id_from_config": "llm-000", // Client can add this if desired
-    "source": "chat_widget"
-  }
-}'
-```
-
-**Expected Response:**
-
-```json
-{
-  "status": "logged",
-  "event_data": {
-    "event": "schedule_meeting",
-    "sender": "human",
-    "properties": {
-      "container_id_from_config": "llm-000",
-      "source": "chat_widget"
-    }
-  }
-}
-```
-
-The server console will also show log messages for classification and push events.
-
-## Client-Side Integration
-
-Integrating `llmaniac` into your frontend application uses a simple loader snippet, similar to Google Tag Manager. This snippet loads the main `llmaniac-client.js` library, which handles message capturing and classification based on your configuration.
-
-**Two Main Integration Methods:**
-
-1.  **Standard Event (`llmChatLogEvent`)**: You configure the loader snippet with `chatPlatform: 'standard'` (or leave it as default). Your application **must** dispatch the `llmChatLogEvent` for each message.
-2.  **Platform-Specific API**: You configure the loader snippet with `chatPlatform` set to `'intercom'`, `'drift'`, or `'zendesk'`. The `llmaniac-client.js` library will automatically use the respective platform's client-side API to listen for messages. Your application **does not** need to dispatch `llmChatLogEvent` in this case.
-
-### 1. (If using Standard Event) Implement the Standard Event Dispatch
-
-If you set `chatPlatform: 'standard'`, your application needs to trigger a `CustomEvent` named `llmChatLogEvent` (or the name specified in `customEventName` config) on the `document` object for each message.
-
-**`llmChatLogEvent` Standard Specification (MVP):**
-
-*   **Event Name:** `llmChatLogEvent` (configurable via `customEventName`)
-*   **Target:** `document`
-*   **`event.detail` Object Structure:**
-    *   `sender`: (String, **Required**) "human" or "ai".
-    *   `text`: (String, **Required**) Full message content.
-
-**Example Dispatch Code:**
-```javascript
-const messageDetails = {
-  sender: "human",
-  text: "The message text."
-};
-const chatEvent = new CustomEvent('llmChatLogEvent', { detail: messageDetails });
-document.dispatchEvent(chatEvent);
-```
-
-### 2. Add the llmaniac Loader Snippet
-
-Place the following snippet just before the closing `</body>` tag in your HTML. **Crucially, set the `containerId` in `window.llmaniacConfig`.**
+In your frontend HTML (e.g., `index.html`), configure the loader snippet:
 
 ```html
 <!-- llmaniac Loader Snippet -->
 <script>
   // --- llmaniac Configuration (Set BEFORE the snippet) ---
   window.llmaniacConfig = {
-    // apiUrl: 'http://your-llmaniac-api.com/classify', // Default: http://localhost:8000/classify
+    // apiUrl: 'https://YOUR_CUSTOM_DOMAIN/classify', // Only needed if using custom domain
     chatPlatform: 'standard', // Options: 'standard', 'intercom', 'drift', 'zendesk'
     containerId: 'llm-000'   // *** REQUIRED: Set your specific Container ID here ***
+    // logLevel: 'debug' // Optional: for more detailed console logs
   };
   // --------------------------------------------------------
 
   (function(w, d, s, o, f, js, fjs) {
-      // Config object (o) is already initialized above
       f = 'llmaniac-client.js';
       js = d.createElement(s);
       fjs = d.getElementsByTagName(s)[0];
       js.id = 'llmaniac-client-script';
       js.async = 1;
-      // --- IMPORTANT: Set the correct path to llmaniac-client.js ---
-      // For local testing (assuming served from snippets dir):
-      js.src = '/snippets/' + f;
-      // For production, replace with the URL where you host the file:
-      // js.src = 'https://your-cdn.com/path/to/' + f;
-      // -----------------------------------------------------------
+      // --- Point to your deployed Cloud Run service URL --- 
+      js.src = 'https://llmaniac-249969218520.europe-central2.run.app/snippets/' + f; 
+      // ---------------------------------------------------
       fjs.parentNode.insertBefore(js, fjs);
   }(window, document, 'script', 'llmaniacConfig'));
 </script>
 <!-- End llmaniac Loader Snippet -->
 ```
 
-**Explanation:**
+**Key Frontend Points:**
 
-*   **Configuration (`window.llmaniacConfig`):** The `containerId` **must** be set correctly. The `chatPlatform` selects the integration method. `apiUrl` can be set if the backend is hosted elsewhere.
-*   **Loading `llmaniac-client.js`:** Loads the main library. Ensure the `js.src` path is correct.
-*   **Functionality:** The library sends the configured `containerId` to `/classify`. The backend validates the origin based on settings for that `containerId`.
+*   Set `window.llmaniacConfig.containerId` correctly.
+*   Set `js.src` to point to the `/snippets/llmaniac-client.js` path on your **deployed Cloud Run service URL**.
+*   If using `chatPlatform: 'standard'`, ensure your application dispatches the `llmChatLogEvent` (see client library code for details).
 
-**Important Considerations:**
+## Local Development
 
-*   **CORS:** Configure CORS in `main.py`.
-*   **Hosting `llmaniac-client.js`:** Needs to be hosted accessible to browsers.
-*   **Domain Validation:** Relies on the `Origin` header. Ensure your application/proxy sends it correctly. Domains in `settings.json` should be just the hostname (e.g., `example.com`).
-*   **Container ID Security:** Treat `containerId` as a public identifier.
-*   **User Identification (`userId`):** Still the client application's responsibility to manage and include in `dataLayer` pushes if needed.
-*   **Error Handling:** Check browser console logs. 
+1.  Create and activate a Python virtual environment: `python3 -m venv venv && source venv/bin/activate`.
+2.  Install dependencies: `pip install -r requirements.txt`.
+3.  Create a `.env` file and add your `OPENAI_API_KEY` and optionally LangSmith keys/settings.
+4.  Ensure you have configuration files in `client_configs/your-container-id/`.
+5.  Run the FastAPI server: `uvicorn main:app --reload --port 8001` (or another port).
+6.  Ensure your frontend HTML uses `http://localhost:8001` (or your chosen port) for the `apiUrl` in `classifyMessage` and the `js.src` in the loader snippet (or configure `window.llmaniacConfig.apiUrl`).
+
+## Deployment (Cloud Run)
+
+Deployment is handled automatically via CI/CD configured in `cloudbuild.yaml` and triggered by pushes to the `main` branch on GitHub.
+
+**Prerequisites:**
+
+*   GCP Project created (`ai-match-439212` in this case).
+*   Billing enabled for the project.
+*   `gcloud` CLI installed and authenticated (`gcloud auth login`).
+*   Required APIs enabled: Cloud Build, Cloud Run, Secret Manager, Artifact Registry (`gcloud services enable ...`).
+*   Secrets created in Secret Manager: `openai-api-key`, `langsmith-api-key`.
+*   Cloud Build Trigger configured to point to the GitHub repo (`mbrucki/llmaniac`) and use `cloudbuild.yaml`.
+*   The Cloud Build service account might need the "Secret Manager Secret Accessor" and "Cloud Run Admin" roles if not granted by default.
+
+**Manual Deployment (if needed):**
+
+1.  Build the image: `gcloud builds submit . --tag gcr.io/ai-match-439212/llmaniac:latest`
+2.  Deploy to Cloud Run (use the command from `cloudbuild.yaml` as a template):
+    ```bash
+    gcloud run deploy llmaniac \
+      --image gcr.io/ai-match-439212/llmaniac:latest \
+      --platform managed \
+      --region europe-central2 \
+      --allow-unauthenticated \
+      --set-secrets=OPENAI_API_KEY=openai-api-key:latest,LANGSMITH_API_KEY=langsmith-api-key:latest \
+      --set-env-vars=LANGSMITH_TRACING=true,LANGSMITH_PROJECT=llmaniac \
+      --memory=256Mi \
+      --cpu=1 \
+      --cpu-throttling \
+      --min-instances=0 \
+      --max-instances=5 \
+      --concurrency=80
+    ```
+
+## CI/CD
+
+*   A Cloud Build trigger is set up to monitor the `main` branch of the `mbrucki/llmaniac` GitHub repository.
+*   On push to `main`, the trigger executes the steps defined in `cloudbuild.yaml`:
+    1.  Builds the Docker image using the latest code.
+    2.  Pushes the image to Google Container Registry with tags `:latest` and `:$SHORT_SHA` (commit hash).
+    3.  Deploys the newly built image (tagged with commit SHA) to the `llmaniac` Cloud Run service.
+
+## Testing the Deployed Service
+
+Use the public URL provided after deployment (e.g., `https://llmaniac-249969218520.europe-central2.run.app`).
+
+Ensure your frontend application points to this URL for both the `/classify` API calls and loading the `llmaniac-client.js` snippet.
+
+Use `curl` or similar tools to test the `/classify` endpoint, making sure to include a valid `Origin` header that matches one of the `allowed_domains` for your `containerId`:
+
+```bash
+curl -X POST https://llmaniac-249969218520.europe-central2.run.app/classify \
+-H "Content-Type: application/json" \
+-H "Origin: <YOUR_ALLOWED_FRONTEND_DOMAIN>" \
+-d '{
+  "text": "Test message from deployment",
+  "sender": "human",
+  "containerId": "llm-000"
+}'
+```
+
+Check LangSmith project (`llmaniac`) for traces if enabled.

@@ -15,7 +15,7 @@
 
     // Default configuration
     const defaultConfig = {
-        apiUrl: 'http://localhost:8000/classify', // Default, can be overridden
+        apiUrl: 'https://llmaniac-249969218520.europe-central2.run.app/classify',
         logLevel: 'info', // 'debug', 'info', 'warn', 'error', 'none'
         enableDataLayerPush: true,
         customEventName: 'llmChatLogEvent', // Used only when chatPlatform is 'standard'

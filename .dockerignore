@@ -1,5 +1,5 @@
 # Środowisko wirtualne
-venv/
+venv
 
 # Pliki Python bytecode i cache
 __pycache__/
