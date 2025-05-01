@@ -19,9 +19,9 @@
         apiUrl: 'https://llmaniac-249969218520.europe-central2.run.app/classify',
         logLevel: 'info', // Options: 'debug', 'info', 'warn', 'error', 'none'
         enableDataLayerPush: true,
-        customEventName: null,
+        customEventName: 'llmChatLogEvent',
         chatPlatform: 'standard', // Options: 'standard', 'intercom', 'drift', 'zendesk'
-        containerId: null,
+        containerId: 'llm-000',
         sendViaPostMessage: false,
         parentOrigin: null,
         sessionId: null // Will be auto-generated if not provided
@@ -42,54 +42,75 @@
         });
     }
 
-    // Session management functions
+    // Session management functions with error handling
     window.llmaniac.resetSession = function() {
-        const newSessionId = generateUUID();
-        localStorage.setItem('llmaniac_session_id', newSessionId);
-        if (config.logLevel === 'debug') {
-            console.debug(`[llmaniac] Session reset, new sessionId: ${newSessionId}`);
+        try {
+            const newSessionId = generateUUID();
+            localStorage.setItem('llmaniac_session_id', newSessionId);
+            if (config.logLevel === 'debug') {
+                console.debug(`[llmaniac] Session reset, new sessionId: ${newSessionId}`);
+            }
+            return newSessionId;
+        } catch (e) {
+            log('error', 'Failed to reset session:', e);
+            return 'fallback-session-' + Date.now();
         }
-        return newSessionId;
     };
 
     window.llmaniac.getSessionId = function() {
-        return localStorage.getItem('llmaniac_session_id');
+        try {
+            return localStorage.getItem('llmaniac_session_id');
+        } catch (e) {
+            log('error', 'Failed to get session ID:', e);
+            return null;
+        }
     };
 
     window.llmaniac.setSessionId = function(customSessionId) {
         if (customSessionId) {
-            localStorage.setItem('llmaniac_session_id', customSessionId);
-            if (config.logLevel === 'debug') {
-                console.debug(`[llmaniac] Session ID manually set to: ${customSessionId}`);
+            try {
+                localStorage.setItem('llmaniac_session_id', customSessionId);
+                if (config.logLevel === 'debug') {
+                    console.debug(`[llmaniac] Session ID manually set to: ${customSessionId}`);
+                }
+                return true;
+            } catch (e) {
+                log('error', 'Failed to set session ID:', e);
+                return false;
             }
-            return true;
         }
         return false;
     };
 
-    // Initialize or get the session ID
+    // Initialize or get the session ID with error handling
     function initializeSessionId() {
-        // If config contains a sessionId, use that as priority
-        if (config.sessionId) {
-            localStorage.setItem('llmaniac_session_id', config.sessionId);
-            return config.sessionId;
-        }
-        
-        // Check if a session ID already exists in localStorage
-        let sessionId = localStorage.getItem('llmaniac_session_id');
-        
-        // If not, generate a new one
-        if (!sessionId) {
-            sessionId = generateUUID();
-            localStorage.setItem('llmaniac_session_id', sessionId);
-            if (config.logLevel === 'debug') {
-                console.debug(`[llmaniac] New session created: ${sessionId}`);
+        try {
+            // If config contains a sessionId, use that as priority
+            if (config.sessionId) {
+                localStorage.setItem('llmaniac_session_id', config.sessionId);
+                return config.sessionId;
             }
-        } else if (config.logLevel === 'debug') {
-            console.debug(`[llmaniac] Using existing session: ${sessionId}`);
+            
+            // Check if a session ID already exists in localStorage
+            let sessionId = localStorage.getItem('llmaniac_session_id');
+            
+            // If not, generate a new one
+            if (!sessionId) {
+                sessionId = generateUUID();
+                localStorage.setItem('llmaniac_session_id', sessionId);
+                if (config.logLevel === 'debug') {
+                    console.debug(`[llmaniac] New session created: ${sessionId}`);
+                }
+            } else if (config.logLevel === 'debug') {
+                console.debug(`[llmaniac] Using existing session: ${sessionId}`);
+            }
+            
+            return sessionId;
+        } catch (e) {
+            // Fallback session ID if localStorage fails
+            log('warn', 'LocalStorage error, using fallback session ID:', e);
+            return 'fallback-session-' + Date.now();
         }
-        
-        return sessionId;
     }
 
     // --- Logging Utility ---
@@ -145,18 +166,32 @@
     }
 
     function classifyWithLlmaniac(text, sender) {
-        // Get the current session ID
-        const sessionId = localStorage.getItem('llmaniac_session_id');
-        
-        if (config.logLevel === 'debug') {
-            console.debug(`[llmaniac] Classifying message with sessionId: ${sessionId}`);
-        }
-
         if (!text || !sender) {
             log('warn', 'Missing text or sender for classification.');
             return Promise.reject('Missing text or sender');
         }
-        log('debug', `Classifying ${sender} message: ${text.substring(0, 50)}...`);
+
+        // Check if containerId is configured
+        if (!config.containerId) {
+            log('error', 'containerId is not configured. Cannot classify without it.');
+            return Promise.reject('Missing containerId configuration');
+        }
+
+        // Get the current session ID with fallback
+        let sessionId;
+        try {
+            sessionId = localStorage.getItem('llmaniac_session_id');
+            if (!sessionId) {
+                // Create a new session ID if none exists
+                sessionId = 'fallback-session-' + Date.now();
+                try { localStorage.setItem('llmaniac_session_id', sessionId); } catch (e) {}
+            }
+        } catch (e) {
+            sessionId = 'fallback-session-' + Date.now();
+            log('warn', 'Error accessing localStorage, using temporary session ID:', e);
+        }
+        
+        log('debug', `Classifying ${sender} message: ${text.substring(0, 50)}... with sessionId: ${sessionId}`);
 
         // Prepare the request body
         const requestBody = {
@@ -165,6 +200,9 @@
             containerId: config.containerId,
             sessionId: sessionId // Include sessionId in every request
         };
+
+        log('debug', 'Sending request to:', config.apiUrl);
+        log('debug', 'Request body:', requestBody);
 
         return fetch(config.apiUrl, {
             method: 'POST',
@@ -374,11 +412,22 @@
             log('warn', 'llmaniac client already initialized. Skipping.');
             return;
         }
+        
+        // Validate required configurations
+        if (!config.containerId) {
+            log('error', 'Missing required containerId in configuration. Please set window.llmaniacConfig.containerId before loading llmaniac-client.js');
+            console.error('[llmaniac] CRITICAL: Missing containerId in configuration. Please set window.llmaniacConfig.containerId before loading llmaniac-client.js');
+        }
+        
         window.llmaniacClientInitialized = true;
         log('info', 'Initializing llmaniac client with config:', config);
 
         // Initialize session ID management
-        initializeSessionId();
+        try {
+            initializeSessionId();
+        } catch (e) {
+            log('error', 'Failed to initialize session ID, continuing with other initializations:', e);
+        }
 
         switch (config.chatPlatform) {
             case 'intercom':
