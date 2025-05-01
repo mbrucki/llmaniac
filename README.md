@@ -8,6 +8,7 @@ This version is deployed on Google Cloud Run and integrates with LangSmith for o
 
 *   **Container-Specific Configuration:** Loads event definitions (`events.json`) and settings (`settings.json`, including `allowed_domains`) from a directory specific to the `containerId` (e.g., `client_configs/llm-000/`).
 *   **OpenAI Classification:** Uses the OpenAI API (specifically `gpt-3.5-turbo` by default) to classify messages based on event descriptions and examples provided in `events.json`. Includes the previous message for context.
+*   **Automatic Session Tracking:** Maintains conversation history separately for each user session using an automatically generated sessionId, allowing for accurate message classification with proper context for multiple concurrent users without any additional configuration.
 *   **Domain Validation:** Verifies the request's `Origin` header against the `allowed_domains` specified in the container's `settings.json`. Returns 403 Forbidden if the origin is not allowed.
 *   **LangSmith Observability:** Automatically traces OpenAI API calls to LangSmith when configured.
 *   **Google Secret Manager Integration:** Securely loads API keys (OpenAI, LangSmith) from GCP Secret Manager when running on Cloud Run.
@@ -155,6 +156,7 @@ In your frontend HTML (e.g., `index.html`), configure the loader snippet:
 *   Set `window.llmaniacConfig.containerId` correctly.
 *   Set `js.src` to point to the `/snippets/llmaniac-client.js` path on your **deployed Cloud Run service URL**.
 *   If using `chatPlatform: 'standard'`, ensure your application dispatches the `llmChatLogEvent` (see client library code for details).
+*   Session tracking is handled automatically - no additional configuration needed.
 
 ## Client-Side Integration
 
@@ -162,7 +164,7 @@ Integrating `llmaniac` into your frontend application uses a simple loader snipp
 
 **Two Main Integration Methods:**
 
-1.  **Standard Event (`llmChatLogEvent`)**: You configure the loader snippet with `chatPlatform: 'standard'` (or leave it as default). Your application **must** dispatch the `llmChatLogEvent` (or the event name specified in `customEventName` config) for each message.
+1.  **Standard Event (`llmChatLogEvent`)**: You configure the loader snippet with `chatPlatform: 'standard'` (or leave it as default). Your application **must** dispatch the `llmChatLogEvent` (or the name specified in `customEventName` config) for each message.
 2.  **Platform-Specific API**: You configure the loader snippet with `chatPlatform` set to `'intercom'`, `'drift'`, or `'zendesk'`. The `llmaniac-client.js` library will automatically use the respective platform's client-side API to listen for messages. Your application **does not** need to dispatch `llmChatLogEvent` in this case.
 
 ### 1. (If using Standard Event) Implement the Standard Event Dispatch
@@ -230,6 +232,18 @@ Place the following snippet just before the closing `</body>` tag in your HTML. 
 
 *   **Configuration (`window.llmaniacConfig`):** The `containerId` **must** be set correctly. The `chatPlatform` selects the integration method. `apiUrl` can be set if the backend is hosted elsewhere (defaults to the Cloud Run service URL). `logLevel`, `enableDataLayerPush` (used when `sendViaPostMessage` is false), and `customEventName` are optional.
 *   **Iframe Integration:** If `llmaniac-client.js` runs inside an iframe, set `sendViaPostMessage: true` and provide the parent window's origin in `parentOrigin`. This makes the script send results using `window.parent.postMessage()` instead of directly pushing to `dataLayer`. See the section below on handling these messages.
+*   **Automatic Session Tracking:** The client automatically generates and maintains a unique session ID for each browser session. This handles conversation history separation with no additional setup required. For advanced use cases, the client exposes API methods:
+  ```javascript
+  // Get the current session ID
+  const currentSessionId = window.llmaniac.getSessionId();
+  
+  // Create a new session (e.g., when a user starts a new conversation)
+  window.llmaniac.resetSession();
+  
+  // Manually set a specific session ID if needed
+  window.llmaniac.setSessionId('custom-session-123');
+  ```
+
 *   **Loading `llmaniac-client.js`:** Loads the main library from the deployed Cloud Run service URL.
 *   **Functionality:** The library sends the configured `containerId` to `/classify`. The backend validates the origin based on settings for that `containerId`.
 
@@ -364,8 +378,11 @@ curl -X POST https://llmaniac-249969218520.europe-central2.run.app/classify \
 -d '{
   "text": "Test message from deployment",
   "sender": "human",
-  "containerId": "llm-000"
+  "containerId": "llm-000",
+  "sessionId": "test-session-123"
 }'
 ```
+
+The `sessionId` parameter is optional as the backend will handle requests without it, but including it allows for testing session-specific conversation tracking.
 
 Check LangSmith project (`llmaniac`) for traces if enabled.

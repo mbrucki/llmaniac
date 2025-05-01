@@ -154,6 +154,7 @@ class ClassifyRequest(BaseModel):
     text: str
     sender: Literal["human", "ai"]
     containerId: str
+    sessionId: Optional[str] = None  # Dodano opcjonalne pole sessionId
 
 class ClassifyResponse(BaseModel):
     event: str | None
@@ -173,12 +174,13 @@ class PushResponse(BaseModel):
 # --- Global Variables / State ---
 push_log: list[PushRequest] = []
 client_config_cache: Dict[str, ClientConfig] = {}
-# Dodano historię ostatnich wiadomości per containerId
+# Zmodyfikowano strukturę historii wiadomości, aby przechowywać per containerId+sessionId
 message_history: Dict[str, Tuple[str, Literal['human', 'ai']]] = {}
 
 # --- Helper Functions ---
 
 SAFE_CONTAINER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+SAFE_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]+$")  # Dodano wzorzec dla sessionId
 
 def sanitize_container_id(container_id: str) -> str | None:
     """Basic sanitization to prevent path traversal."""
@@ -188,6 +190,12 @@ def sanitize_container_id(container_id: str) -> str | None:
     return None
 
 DEFAULT_THRESHOLD = 0.7
+
+def get_history_key(container_id: str, session_id: Optional[str]) -> str:
+    """Generuje klucz do przechowywania historii, bazując na containerId i opcjonalnym sessionId."""
+    if session_id and SAFE_SESSION_ID_PATTERN.match(session_id):
+        return f"{container_id}:{session_id}"
+    return container_id  # Fallback na stary format, jeśli sessionId nie podany lub niepoprawny
 
 def load_client_config(container_id: str) -> ClientConfig | None:
     """Ładuje konfigurację klienta (eventy i ustawienia) z plików."""
@@ -365,7 +373,10 @@ async def classify_message(request_body: ClassifyRequest, request: Request):
     Klasyfikuje tekst wejściowy używając API OpenAI, po walidacji domeny.
     """
     container_id = request_body.containerId
-    logger.info(f"Received classify request for containerId='{container_id}', sender='{request_body.sender}', text='{request_body.text[:50]}...'")
+    session_id = request_body.sessionId
+    history_key = get_history_key(container_id, session_id)
+    
+    logger.info(f"Received classify request for containerId='{container_id}', sessionId='{session_id}', sender='{request_body.sender}', text='{request_body.text[:50]}...'")
     client_config = load_client_config(container_id)
     if not client_config:
         logger.error(f"Configuration not found or invalid for containerId: {container_id}")
@@ -390,14 +401,14 @@ async def classify_message(request_body: ClassifyRequest, request: Request):
         raise HTTPException(status_code=403, detail="Origin not allowed")
     logger.debug(f"Origin '{origin_domain}' validated successfully for containerId '{container_id}'")
 
-    # 3. Pobierz poprzednią wiadomość z historii
+    # 3. Pobierz poprzednią wiadomość z historii dla tego klucza (containerId+sessionId)
     prev_text: Optional[str] = None
     prev_sender: Optional[Literal["human", "ai"]] = None
-    if container_id in message_history:
-        prev_text, prev_sender = message_history[container_id]
-        logger.debug(f"Found previous message for context (Sender: {prev_sender}): {prev_text[:50]}...")
+    if history_key in message_history:
+        prev_text, prev_sender = message_history[history_key]
+        logger.debug(f"Found previous message for context (Key: {history_key}, Sender: {prev_sender}): {prev_text[:50]}...")
     else:
-        logger.debug("No previous message found in history for this containerId.")
+        logger.debug(f"No previous message found in history for this key: {history_key}")
 
     # 4. Klasyfikacja za pomocą OpenAI (z kontekstem)
     classified_event_name: str | None = None
@@ -415,9 +426,9 @@ async def classify_message(request_body: ClassifyRequest, request: Request):
         logger.error(f"Exception during OpenAI classification call for {container_id}: {e}")
         raise HTTPException(status_code=500, detail="Error during classification process.")
 
-    # 5. Zaktualizuj historię ostatnią wiadomością
-    message_history[container_id] = (request_body.text, request_body.sender)
-    logger.debug(f"Updated message history for {container_id}.")
+    # 5. Zaktualizuj historię ostatnią wiadomością, używając klucza zawierającego sessionId
+    message_history[history_key] = (request_body.text, request_body.sender)
+    logger.debug(f"Updated message history for key: {history_key}")
 
     # 6. Zastosuj Próg (logika bez zmian, tylko informacyjnie)
     should_push = classified_event_name is not None

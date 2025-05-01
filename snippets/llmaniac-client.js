@@ -14,20 +14,83 @@
 (function(window, document) {
     'use strict';
 
-    // Default configuration
+    // Define the default configuration
     const defaultConfig = {
         apiUrl: 'https://llmaniac-249969218520.europe-central2.run.app/classify',
-        logLevel: 'info', // 'debug', 'info', 'warn', 'error', 'none'
-        enableDataLayerPush: true, // Controls dataLayer push only when sendViaPostMessage is false
-        customEventName: 'llmChatLogEvent', // Used only when chatPlatform is 'standard'
-        chatPlatform: 'standard', // 'standard', 'intercom', 'drift', 'zendesk'
-        containerId: 'llm-000', // Renamed from clientId
-        sendViaPostMessage: false, // If true, send results to parent window instead of dataLayer
-        parentOrigin: null // Required target origin for postMessage if sendViaPostMessage is true
+        logLevel: 'info', // Options: 'debug', 'info', 'warn', 'error', 'none'
+        enableDataLayerPush: true,
+        customEventName: null,
+        chatPlatform: 'standard', // Options: 'standard', 'intercom', 'drift', 'zendesk'
+        containerId: null,
+        sendViaPostMessage: false,
+        parentOrigin: null,
+        sessionId: null // Will be auto-generated if not provided
     };
 
     // Merge default config with user-provided config
     const config = { ...defaultConfig, ...(window.llmaniacConfig || {}) };
+
+    // Initialize or expose the llmaniac global object
+    window.llmaniac = window.llmaniac || {};
+
+    // Function to generate a UUID for session tracking
+    function generateUUID() {
+        // Simple UUID generator
+        return 'xxxx-xxxx-xxxx-xxxx'.replace(/[x]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            return r.toString(16);
+        });
+    }
+
+    // Session management functions
+    window.llmaniac.resetSession = function() {
+        const newSessionId = generateUUID();
+        localStorage.setItem('llmaniac_session_id', newSessionId);
+        if (config.logLevel === 'debug') {
+            console.debug(`[llmaniac] Session reset, new sessionId: ${newSessionId}`);
+        }
+        return newSessionId;
+    };
+
+    window.llmaniac.getSessionId = function() {
+        return localStorage.getItem('llmaniac_session_id');
+    };
+
+    window.llmaniac.setSessionId = function(customSessionId) {
+        if (customSessionId) {
+            localStorage.setItem('llmaniac_session_id', customSessionId);
+            if (config.logLevel === 'debug') {
+                console.debug(`[llmaniac] Session ID manually set to: ${customSessionId}`);
+            }
+            return true;
+        }
+        return false;
+    };
+
+    // Initialize or get the session ID
+    function initializeSessionId() {
+        // If config contains a sessionId, use that as priority
+        if (config.sessionId) {
+            localStorage.setItem('llmaniac_session_id', config.sessionId);
+            return config.sessionId;
+        }
+        
+        // Check if a session ID already exists in localStorage
+        let sessionId = localStorage.getItem('llmaniac_session_id');
+        
+        // If not, generate a new one
+        if (!sessionId) {
+            sessionId = generateUUID();
+            localStorage.setItem('llmaniac_session_id', sessionId);
+            if (config.logLevel === 'debug') {
+                console.debug(`[llmaniac] New session created: ${sessionId}`);
+            }
+        } else if (config.logLevel === 'debug') {
+            console.debug(`[llmaniac] Using existing session: ${sessionId}`);
+        }
+        
+        return sessionId;
+    }
 
     // --- Logging Utility ---
     const logLevels = { 'debug': 1, 'info': 2, 'warn': 3, 'error': 4, 'none': 5 };
@@ -82,20 +145,31 @@
     }
 
     function classifyWithLlmaniac(text, sender) {
+        // Get the current session ID
+        const sessionId = localStorage.getItem('llmaniac_session_id');
+        
+        if (config.logLevel === 'debug') {
+            console.debug(`[llmaniac] Classifying message with sessionId: ${sessionId}`);
+        }
+
         if (!text || !sender) {
             log('warn', 'Missing text or sender for classification.');
             return Promise.reject('Missing text or sender');
         }
         log('debug', `Classifying ${sender} message: ${text.substring(0, 50)}...`);
 
+        // Prepare the request body
+        const requestBody = {
+            text: text,
+            sender: sender,
+            containerId: config.containerId,
+            sessionId: sessionId // Include sessionId in every request
+        };
+
         return fetch(config.apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify({
-                text: text,
-                sender: sender,
-                containerId: config.containerId
-            })
+            body: JSON.stringify(requestBody)
         })
         .then(response => {
             if (!response.ok) {
@@ -302,6 +376,9 @@
         }
         window.llmaniacClientInitialized = true;
         log('info', 'Initializing llmaniac client with config:', config);
+
+        // Initialize session ID management
+        initializeSessionId();
 
         switch (config.chatPlatform) {
             case 'intercom':
