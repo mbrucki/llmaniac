@@ -123,10 +123,15 @@ In your frontend HTML (e.g., `index.html`), configure the loader snippet:
 <script>
   // --- llmaniac Configuration (Set BEFORE the snippet) ---
   window.llmaniacConfig = {
-    // apiUrl: 'https://YOUR_CUSTOM_DOMAIN/classify', // Only needed if using custom domain
+    // apiUrl: 'https://YOUR_CUSTOM_DOMAIN/classify', // Default: https://llmaniac-249969218520.europe-central2.run.app/classify
     chatPlatform: 'standard', // Options: 'standard', 'intercom', 'drift', 'zendesk'
-    containerId: 'llm-000'   // *** REQUIRED: Set your specific Container ID here ***
-    // logLevel: 'debug' // Optional: for more detailed console logs
+    containerId: 'llm-000',   // *** REQUIRED: Set your specific Container ID here ***
+    // customEventName: 'myCustomChatEvent', // Optional: Name for the standard event
+    // logLevel: 'info',     // Optional: 'debug', 'info', 'warn', 'error', 'none'
+    // enableDataLayerPush: true, // Optional: Set to false to disable dataLayer pushes (when not using postMessage)
+    // --- Options for iframe integration ---
+    // sendViaPostMessage: false, // Optional: Set to true if llmaniac-client.js runs inside an iframe
+    // parentOrigin: null       // Optional: Required if sendViaPostMessage is true. Set to the origin of the parent window (e.g., 'https://yourdomain.com')
   };
   // --------------------------------------------------------
 
@@ -198,7 +203,10 @@ Place the following snippet just before the closing `</body>` tag in your HTML. 
     containerId: 'llm-000',   // *** REQUIRED: Set your specific Container ID here ***
     // customEventName: 'myCustomChatEvent', // Optional: Name for the standard event
     // logLevel: 'info',     // Optional: 'debug', 'info', 'warn', 'error', 'none'
-    // enableDataLayerPush: true // Optional: Set to false to disable dataLayer pushes
+    // enableDataLayerPush: true, // Optional: Set to false to disable dataLayer pushes (when not using postMessage)
+    // --- Options for iframe integration ---
+    // sendViaPostMessage: false, // Optional: Set to true if llmaniac-client.js runs inside an iframe
+    // parentOrigin: null       // Optional: Required if sendViaPostMessage is true. Set to the origin of the parent window (e.g., 'https://yourdomain.com')
   };
   // --------------------------------------------------------
 
@@ -220,9 +228,75 @@ Place the following snippet just before the closing `</body>` tag in your HTML. 
 
 **Explanation:**
 
-*   **Configuration (`window.llmaniacConfig`):** The `containerId` **must** be set correctly. The `chatPlatform` selects the integration method. `apiUrl` can be set if the backend is hosted elsewhere (defaults to the Cloud Run service URL). `logLevel`, `enableDataLayerPush` and `customEventName` are optional.
+*   **Configuration (`window.llmaniacConfig`):** The `containerId` **must** be set correctly. The `chatPlatform` selects the integration method. `apiUrl` can be set if the backend is hosted elsewhere (defaults to the Cloud Run service URL). `logLevel`, `enableDataLayerPush` (used when `sendViaPostMessage` is false), and `customEventName` are optional.
+*   **Iframe Integration:** If `llmaniac-client.js` runs inside an iframe, set `sendViaPostMessage: true` and provide the parent window's origin in `parentOrigin`. This makes the script send results using `window.parent.postMessage()` instead of directly pushing to `dataLayer`. See the section below on handling these messages.
 *   **Loading `llmaniac-client.js`:** Loads the main library from the deployed Cloud Run service URL.
 *   **Functionality:** The library sends the configured `containerId` to `/classify`. The backend validates the origin based on settings for that `containerId`.
+
+### 3. Handling postMessage (if using iframe)
+
+If you set `sendViaPostMessage: true` in the configuration (because `llmaniac-client.js` is loaded within an iframe), the script will send classification results to the parent window using `window.parent.postMessage()`. The parent window (where your GTM container is loaded) needs to listen for these messages and push them to the `dataLayer`.
+
+Add the following code as a "Custom HTML" tag in your GTM container, triggered on page load (e.g., "DOM Ready" or "Window Loaded"). This code is written in ES5 to ensure compatibility with GTM's environment.
+
+**GTM Custom HTML Tag Code:**
+
+```html
+<script>
+  (function() {
+    window.addEventListener('message', function(event) {
+      // --- IMPORTANT: Set the expected origin of the iframe ---
+      var expectedOrigin = 'https://URL-OF-YOUR-CHAT-IFRAME.com'; // <-- Replace with the actual origin!
+
+      // Verify the message origin for security
+      if (event.origin !== expectedOrigin) {
+        // Optional: Log unexpected origins for debugging
+        // console.warn('Received message from unexpected origin:', event.origin);
+        return;
+      }
+
+      var messageData = event.data;
+
+      // Check if it's the message type sent by llmaniac-client.js
+      if (messageData && messageData.type === 'llmaniacClassification' && messageData.data) {
+        console.log('Received llmaniac classification from iframe:', messageData.data);
+
+        var classificationResult = messageData.data; // This contains { event, confidence, sender, containerId, chat_platform, ... }
+
+        // Ensure dataLayer exists
+        window.dataLayer = window.dataLayer || [];
+
+        // Prepare the payload for dataLayer (matches the direct push format)
+        var dataLayerPayload = {
+            'event': 'llmaniac_event', // Standard GTM event name
+            'action': classificationResult.event,
+            'confidence': classificationResult.confidence,
+            'message_sender_type': classificationResult.sender,
+            'llm_container_id': classificationResult.containerId,
+            'chat_platform': classificationResult.chat_platform
+            // Add other relevant fields if they are sent in messageData.data
+        };
+
+        // Push to dataLayer
+        try {
+            window.dataLayer.push(dataLayerPayload);
+            console.log('Pushed llmaniac event from iframe to dataLayer:', dataLayerPayload);
+        } catch (e) {
+            console.error('Error pushing received message to dataLayer:', e);
+        }
+      }
+    });
+
+    console.log('Parent window listener for llmaniac iframe messages is ready (ES5 compatible).');
+  })();
+</script>
+```
+
+**Key Points for the Parent Page Listener:**
+
+*   **`expectedOrigin`:** You **must** replace `'https://URL-OF-YOUR-CHAT-IFRAME.com'` with the actual origin (protocol + domain + port) from which your chat iframe is served. This is crucial for security.
+*   **Message Structure:** The listener expects messages with `event.data.type === 'llmaniacClassification'` and the actual classification details within `event.data.data`.
+*   **`dataLayer` Push:** The listener constructs the `dataLayerPayload` using the received data and pushes it to the parent window's `dataLayer`.
 
 ## Local Development
 

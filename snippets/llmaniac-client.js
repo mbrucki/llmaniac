@@ -5,7 +5,8 @@
  *          Listens for chat messages either via the standard `llmChatLogEvent`
  *          or via platform-specific APIs (Intercom, Drift, Zendesk Classic)
  *          based on configuration.
- *          Sends messages to the llmaniac API and pushes results to dataLayer.
+ *          Sends messages to the llmaniac API and either pushes results to dataLayer
+ *          or sends them to the parent window via postMessage based on config.
  *
  * This script is intended to be loaded dynamically by a small loader snippet.
  * It relies on configuration passed via `window.llmaniacConfig`.
@@ -17,10 +18,12 @@
     const defaultConfig = {
         apiUrl: 'https://llmaniac-249969218520.europe-central2.run.app/classify',
         logLevel: 'info', // 'debug', 'info', 'warn', 'error', 'none'
-        enableDataLayerPush: true,
+        enableDataLayerPush: true, // Controls dataLayer push only when sendViaPostMessage is false
         customEventName: 'llmChatLogEvent', // Used only when chatPlatform is 'standard'
         chatPlatform: 'standard', // 'standard', 'intercom', 'drift', 'zendesk'
-        containerId: 'llm-000' // Renamed from clientId
+        containerId: 'llm-000', // Renamed from clientId
+        sendViaPostMessage: false, // If true, send results to parent window instead of dataLayer
+        parentOrigin: null // Required target origin for postMessage if sendViaPostMessage is true
     };
 
     // Merge default config with user-provided config
@@ -38,6 +41,43 @@
     }
 
     // --- Core Functions ---
+
+    // Function to handle sending data either via postMessage or dataLayer push
+    function dispatchClassificationResult(classificationData) {
+        if (!classificationData.shouldPush || !classificationData.event) {
+             log('debug', 'Classification result condition not met (shouldPush=false or no event). Skipping dispatch.');
+             return; // Exit if conditions aren't met
+        }
+
+        if (config.sendViaPostMessage) {
+            // --- Send via postMessage ---
+            if (!config.parentOrigin) {
+                log('error', 'sendViaPostMessage is true, but parentOrigin is not configured. Cannot send message.');
+                return;
+            }
+            log('debug', 'Sending classification result via postMessage to parent.');
+            const messagePayload = {
+                type: 'llmaniacClassification', // Standardized type for listener
+                data: {
+                    event: classificationData.event,
+                    confidence: classificationData.confidence,
+                    sender: classificationData.sender,
+                    containerId: config.containerId,
+                    chat_platform: config.chatPlatform
+                    // Include any other relevant fields from classificationData if needed
+                }
+            };
+            try {
+                window.parent.postMessage(messagePayload, config.parentOrigin);
+                log('info', 'Sent classification data to parent window:', messagePayload);
+            } catch (error) {
+                log('error', 'Failed to send message to parent window. Check parentOrigin configuration and CORS policy.', error);
+            }
+        } else {
+            // --- Push directly to dataLayer ---
+            pushToDataLayer(classificationData);
+        }
+    }
 
     function classifyWithLlmaniac(text, sender) {
         if (!text || !sender) {
@@ -58,21 +98,44 @@
         .then(response => {
             if (!response.ok) {
                 log('error', `API request failed with status: ${response.status}`);
-                throw new Error(`HTTP error! status: ${response.status}`);
+                // Try to parse error message from response body if possible
+                return response.text().then(bodyText => {
+                    log('error', 'API Error Response Body:', bodyText);
+                    throw new Error(`HTTP error! status: ${response.status} - ${bodyText}`);
+                }).catch(() => {
+                    // If reading text fails, just throw the original status error
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                });
             }
             return response.json();
         })
+        // --- MODIFIED: Call dispatchClassificationResult after successful classification ---
+        .then(classificationData => {
+             log('info', 'Classification result:', classificationData);
+             dispatchClassificationResult(classificationData); // Single point for handling result dispatch
+             return classificationData; // Pass data along if needed for other .then() chains (though none exist here)
+        })
         .catch(error => {
-            log('error', 'API call failed:', error);
-            throw error; // Re-throw error to be caught by caller
+            log('error', 'API call or result dispatch failed:', error);
+            // Don't re-throw here unless absolutely necessary,
+            // prevents Promise rejection in the listener's chain unless critical.
+            // throw error;
         });
     }
 
+
     function pushToDataLayer(classificationData) {
-        if (!config.enableDataLayerPush || typeof window.dataLayer === 'undefined') {
-            if (config.enableDataLayerPush) log('warn', 'dataLayer not found, cannot push event.');
+        // This function is now only called when config.sendViaPostMessage is false
+        if (!config.enableDataLayerPush) {
+             log('debug', 'enableDataLayerPush is false. Skipping dataLayer push.');
+             return;
+        }
+        if (typeof window.dataLayer === 'undefined') {
+            log('warn', 'dataLayer not found, cannot push event.');
             return;
         }
+
+        log('debug', 'Pushing classification result directly to dataLayer.');
 
         // Zbieranie wspólnych właściwości
         const commonProperties = {
@@ -90,11 +153,19 @@
             ...commonProperties                // <<< Dodano resztę właściwości
         };
 
-        window.dataLayer.push(dataLayerPayload);
-        log('info', 'Pushed standardized event to dataLayer:', dataLayerPayload); // Zaktualizowano log
+        // Perform the actual push
+        try {
+             window.dataLayer.push(dataLayerPayload);
+             log('info', 'Pushed standardized event to dataLayer:', dataLayerPayload);
+        } catch (e) {
+             log('error', 'Error pushing to dataLayer:', e);
+        }
     }
 
+
     // --- Platform-Specific Integration Logic ---
+    // REMOVED pushToDataLayer calls from individual handlers,
+    // classifyWithLlmaniac now handles dispatching via dispatchClassificationResult
 
     // Standard Event Listener
     function initializeStandardEventListener() {
@@ -105,14 +176,8 @@
                 log('warn', 'Invalid or incomplete standard event received (requires text, sender):', messageData);
                 return;
             }
-            classifyWithLlmaniac(messageData.text, messageData.sender)
-                .then(classificationData => {
-                    log('info', 'Classification result:', classificationData);
-                    if (classificationData.shouldPush && classificationData.event) {
-                        pushToDataLayer(classificationData);
-                    }
-                })
-                .catch(error => log('debug', 'Skipping dataLayer push due to API error.'));
+            // classifyWithLlmaniac now handles dispatching the result
+            classifyWithLlmaniac(messageData.text, messageData.sender);
         });
         log('info', `Standard Mode: Listening for ${config.customEventName} on document.`);
     }
@@ -124,16 +189,11 @@
             Intercom('onMessageSent', function(messageContent) {
                 log('debug', 'Intercom onMessageSent detected.');
                 if (messageContent && typeof messageContent === 'string') {
-                    classifyWithLlmaniac(messageContent, 'human')
-                        .then(classificationData => {
-                            log('info', 'Classification result:', classificationData);
-                            if (classificationData.shouldPush && classificationData.event) {
-                                pushToDataLayer(classificationData);
-                            }
-                        })
-                        .catch(error => log('debug', 'Skipping dataLayer push due to API error.'));
+                    // classifyWithLlmaniac now handles dispatching the result
+                    classifyWithLlmaniac(messageContent, 'human');
                 }
             });
+            // Note: Listening for AI messages in Intercom via client-side API is difficult/unreliable
             log('warn', 'Intercom integration focuses on human messages due to client-side API limitations for AI messages.');
             log('info', 'Intercom listeners set up.');
         } else {
@@ -153,27 +213,19 @@
             driftApi.on('message:sent', function(data) {
                 log('debug', 'Drift message:sent detected.');
                 if (data?.message?.body) {
-                    classifyWithLlmaniac(data.message.body, 'human')
-                        .then(classificationData => {
-                            log('info', 'Classification result:', classificationData);
-                            if (classificationData.shouldPush && classificationData.event) {
-                                pushToDataLayer(classificationData);
-                            }
-                        })
-                        .catch(error => log('debug', 'Skipping dataLayer push due to API error.'));
+                    // classifyWithLlmaniac now handles dispatching the result
+                    classifyWithLlmaniac(data.message.body, 'human');
                 }
             });
             driftApi.on('message', function(data) {
                 log('debug', 'Drift message received detected.');
-                if (data?.message?.body && data?.message?.authorType && data.message.authorType !== 'END_USER') {
-                    classifyWithLlmaniac(data.message.body, 'ai')
-                        .then(classificationData => {
-                            log('info', 'Classification result:', classificationData);
-                            if (classificationData.shouldPush && classificationData.event) {
-                                pushToDataLayer(classificationData);
-                            }
-                        })
-                        .catch(error => log('debug', 'Skipping dataLayer push due to API error.'));
+                // Try to determine if it's an AI/agent message
+                const isAgent = data?.message?.authorType && data.message.authorType !== 'END_USER';
+                if (data?.message?.body && isAgent) {
+                     // classifyWithLlmaniac now handles dispatching the result
+                     classifyWithLlmaniac(data.message.body, 'ai');
+                } else if (data?.message?.body && !isAgent) {
+                     log('debug', 'Ignoring Drift received message from END_USER (handled by message:sent).');
                 }
             });
             log('info', 'Drift listeners set up.');
@@ -195,14 +247,14 @@
 
     // Zendesk Chat (Classic) Integration
     function initializeZendeskIntegration() {
-        let lastVisitorMessage = '';
-        let lastAgentMessage = '';
+        let lastVisitorMessage = ''; // Simple debounce/dedupe
+        let lastAgentMessage = ''; // Simple debounce/dedupe
 
         if (typeof $zopim === 'function' && $zopim.livechat) {
             log('info', 'Zendesk API ($zopim) ready. Setting up listeners.');
             $zopim(function() {
                 log('debug', 'Inside $zopim callback.');
-                let visitorDisplayName = '';
+                let visitorDisplayName = ''; // Try to get visitor name for better sender detection
                 try {
                     visitorDisplayName = $zopim.livechat.visitor.getInfo()?.display_name;
                 } catch (e) { log('warn', 'Could not get Zendesk visitor display name initially.', e); }
@@ -212,25 +264,22 @@
                         log('debug', 'Zendesk chat.msg detected:', event);
 
                         // Determine sender
-                        let senderType = 'ai';
+                        let senderType = 'ai'; // Assume AI (agent) unless identified as visitor
+                        // Check if display name matches visitor OR nick is 'visitor'
                         if ((visitorDisplayName && event.display_name === visitorDisplayName) || event.nick === 'visitor') {
                             senderType = 'human';
                         }
 
-                        // Basic debounce
-                        if (senderType === 'human' && event.msg === lastVisitorMessage) return;
-                        if (senderType === 'ai' && event.msg === lastAgentMessage) return;
-                        if (senderType === 'human') lastVisitorMessage = event.msg;
-                        if (senderType === 'ai') lastAgentMessage = event.msg;
+                        // Basic debounce to avoid duplicate processing if event fires multiple times
+                        if (senderType === 'human' && event.msg === lastVisitorMessage) { log('debug','Debouncing duplicate human message'); return; }
+                        if (senderType === 'ai' && event.msg === lastAgentMessage) { log('debug','Debouncing duplicate ai message'); return; }
 
-                        classifyWithLlmaniac(event.msg, senderType)
-                            .then(classificationData => {
-                                log('info', 'Classification result:', classificationData);
-                                if (classificationData.shouldPush && classificationData.event) {
-                                    pushToDataLayer(classificationData);
-                                }
-                            })
-                            .catch(error => log('debug', 'Skipping dataLayer push due to API error.'));
+                        // Update last message cache
+                        if (senderType === 'human') { lastVisitorMessage = event.msg; lastAgentMessage = ''; } // Reset other cache
+                        if (senderType === 'ai') { lastAgentMessage = event.msg; lastVisitorMessage = ''; } // Reset other cache
+
+                        // classifyWithLlmaniac now handles dispatching the result
+                        classifyWithLlmaniac(event.msg, senderType);
                     }
                 });
                 log('info', 'Zendesk listeners set up.');
@@ -244,23 +293,13 @@
     // --- Initialization Router ---
 
     function initialize() {
-        // --- Zabezpieczenie przed podwójną inicjalizacją --- START
+        // Prevent double initialization
         if (window.llmaniacClientInitialized) {
             log('warn', 'llmaniac client already initialized. Skipping.');
             return;
         }
-        // --- Zabezpieczenie przed podwójną inicjalizacją --- END
-
-        if (!config.apiUrl || config.apiUrl === 'YOUR_LLMANIAC_CLASSIFY_API_URL') {
-            log('error', 'llmaniac API URL is not configured correctly. Aborting initialization.');
-            return;
-        }
-        if (!config.containerId) {
-            log('error', 'llmaniac containerId is not configured. Aborting initialization.');
-            return;
-        }
-
-        log('info', `Initializing llmaniac client. Config:`, config);
+        window.llmaniacClientInitialized = true;
+        log('info', 'Initializing llmaniac client with config:', config);
 
         switch (config.chatPlatform) {
             case 'intercom':
@@ -273,23 +312,21 @@
                 initializeZendeskIntegration();
                 break;
             case 'standard':
-            default:
+            default: // Fallback to standard if platform is unknown or 'standard'
+                if (config.chatPlatform !== 'standard') {
+                     log('warn', `Unknown chatPlatform '${config.chatPlatform}'. Falling back to 'standard'.`);
+                }
                 initializeStandardEventListener();
                 break;
         }
-
-        // --- Zabezpieczenie przed podwójną inicjalizacją - ustawienie flagi --- START
-        window.llmaniacClientInitialized = true;
-        log('info', 'llmaniac client initialization complete.');
-        // --- Zabezpieczenie przed podwójną inicjalizacją - ustawienie flagi --- END
     }
 
-    // --- Start Initialization ---
-    // Ensure DOM is ready (or wait if needed, although usually loaded later)
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initialize);
-    } else {
+    // --- Auto-Initialization ---
+    // Use a simple ready check or timeout to start initialization
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
         initialize();
+    } else {
+        document.addEventListener('DOMContentLoaded', initialize);
     }
 
 })(window, document); 
