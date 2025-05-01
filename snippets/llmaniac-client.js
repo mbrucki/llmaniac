@@ -49,32 +49,34 @@
              return; // Exit if conditions aren't met
         }
 
+        // Check for and perform postMessage if enabled
         if (config.sendViaPostMessage) {
-            // --- Send via postMessage ---
             if (!config.parentOrigin) {
                 log('error', 'sendViaPostMessage is true, but parentOrigin is not configured. Cannot send message.');
-                return;
-            }
-            log('debug', 'Sending classification result via postMessage to parent.');
-            const messagePayload = {
-                type: 'llmaniacClassification', // Standardized type for listener
-                data: {
-                    event: classificationData.event,
-                    confidence: classificationData.confidence,
-                    sender: classificationData.sender,
-                    containerId: config.containerId,
-                    chat_platform: config.chatPlatform
-                    // Include any other relevant fields from classificationData if needed
+            } else {
+                log('debug', 'Sending classification result via postMessage to parent.');
+                const messagePayload = {
+                    type: 'llmaniacClassification', // Standardized type for listener
+                    data: {
+                        event: classificationData.event,
+                        confidence: classificationData.confidence,
+                        sender: classificationData.sender,
+                        containerId: config.containerId,
+                        chat_platform: config.chatPlatform
+                        // Include any other relevant fields from classificationData if needed
+                    }
+                };
+                try {
+                    window.parent.postMessage(messagePayload, config.parentOrigin);
+                    log('info', 'Sent classification data to parent window:', messagePayload);
+                } catch (error) {
+                    log('error', 'Failed to send message to parent window. Check parentOrigin configuration and CORS policy.', error);
                 }
-            };
-            try {
-                window.parent.postMessage(messagePayload, config.parentOrigin);
-                log('info', 'Sent classification data to parent window:', messagePayload);
-            } catch (error) {
-                log('error', 'Failed to send message to parent window. Check parentOrigin configuration and CORS policy.', error);
             }
-        } else {
-            // --- Push directly to dataLayer ---
+        }
+        
+        // Check for and perform dataLayer push if enabled (INDEPENDENTLY of postMessage)
+        if (config.enableDataLayerPush) {
             pushToDataLayer(classificationData);
         }
     }
