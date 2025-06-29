@@ -1,12 +1,9 @@
 fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
-# transformers>=4.30.0 # Usunięte
-# torch>=2.0.0 # Usunięte - niepotrzebne dla OpenAI
 pydantic>=2.0.0
 python-multipart # Often useful with FastAPI
 httpx # For making HTTP requests if needed
 loguru
-# sentence-transformers # Usunięte - niepotrzebne dla OpenAI
 openai # Dla klasyfikacji za pomocą LLM
 python-dotenv # Do wczytywania zmiennych z pliku .env
 langsmith # Do observability via LangSmith
