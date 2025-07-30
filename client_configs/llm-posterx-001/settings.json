@@ -1,0 +1,10 @@
+{
+  "allowed_domains": [
+    "localhost",
+    "127.0.0.1",
+    "posterx.pl",
+    "lead-ai-chat-249969218520.europe-west1.run.app",
+    "load.leadlang.com",
+    "leadlang.com"
+  ]
+} 
